@@ -113,5 +113,234 @@ SET total_num_of_students = COALESCE((
     WHERE grades.course_id = courses.course_id
 ), 0)
 where course_id >= 1;
+----------------------------------------------------------------------------
+----------------------------------------------------------------------------
+
+-- מה עושה פונקציה COALESCE ?
+
+-- הפונקציה COALESCE משמשת בשפת SQL (וגם בשפות אחרות)
+-- כדי להחזיר את הערך הראשון שאינו NULL מתוך רשימה של ערכים.
+-- אם כל הערכים ברשימה הם NULL, היא מחזירה NULL.
+
+-- בקטע הקוד הזה, הפונקציה COALESCE משמשת כדי
+-- להבטיח שהערך המוגדר עבור total_num_of_students לא יהיה NULL.
+
+SELECT COUNT(DISTINCT student_id)
+FROM grades
+WHERE grades.course_id = courses.course_id
+-- תת-השאילתה מחשבת את מספר הסטודנטים הייחודיים הרשומים לכל קורס.
+-- אם אין סטודנטים רשומים לקורס (ולכן השאילתה מחזירה NULL), נשתמש ב-COALESCE.
+
+COALESCE((...), 0)
+-- אם תת-השאילתה מחזירה NULL (כלומר, אין סטודנטים בקורס), הפונקציה COALESCE מחזירה 0.
+-- כך, הערך המוקצה ל-total_num_of_students יהיה תמיד מספר (0 במקרה שאין תלמידים).
+----------------------------------------------------------------------------------
+----------------------------------------------------------------------------------
+
+-- כעת הוסף triggers כך ש: כאשר נוסיף ציון של תלמיד ב טבלת ציונים, מספר התלמידים שלמדו
+-- בקורס יתעדכן בהתאם )שים לב מספר התלמידים בקורס נקבע לפי ספירה של כמות הציונים( .
+-- ועכשיו הוסף טריגר שכאשר נמחק ציון של תלמיד בטבלת ציונים , מספר התלמידים שלמדו בקורס
+-- יתעדכן בהתאם
+
+-- הוספת שני טריגרים: אחד עבור הוספת ציון ואחד עבור מחיקת ציון:
+-- טריגר להוספת ציון
+
+CREATE OR REPLACE FUNCTION update_student_count_on_insert()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE courses
+    SET total_num_of_students = (
+        SELECT COUNT(DISTINCT student_id)
+        FROM grades
+        WHERE course_id = NEW.course_id
+    )
+    WHERE course_id = NEW.course_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER after_grade_insert
+AFTER INSERT ON grades
+FOR EACH ROW
+EXECUTE FUNCTION update_student_count_on_insert();
+
+
+-- טריגר למחיקת ציון
+
+CREATE OR REPLACE FUNCTION update_student_count_on_delete()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE courses
+    SET total_num_of_students = (
+        SELECT COUNT(DISTINCT student_id)
+        FROM grades
+        WHERE course_id = OLD.course_id
+    )
+    WHERE course_id = OLD.course_id;
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER after_grade_delete
+AFTER DELETE ON grades
+FOR EACH ROW
+EXECUTE FUNCTION update_student_count_on_delete();
+----------------------------------------------------
+
+-- כעת הוסף תלמיד ובדוק אם אכן מספר התלמידים בקורס השתנה בהתאם
+-- לא לשכוח להגיש את פונקציית ה triggerואת הפונקציה שהיא מפעילה...
+
+-- פונקציות הטריגר
+-- פונקציה להוספת ציון (כפי שניתן קודם)
+
+CREATE OR REPLACE FUNCTION update_student_count_on_insert()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE courses
+    SET total_num_of_students = (
+        SELECT COUNT(DISTINCT student_id)
+        FROM grades
+        WHERE course_id = NEW.course_id
+    )
+    WHERE course_id = NEW.course_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+----------------------
+
+-- פונקציה למחיקת ציון (כפי שניתן קודם)
+
+CREATE OR REPLACE FUNCTION update_student_count_on_delete()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE courses
+    SET total_num_of_students = (
+        SELECT COUNT(DISTINCT student_id)
+        FROM grades
+        WHERE course_id = OLD.course_id
+    )
+    WHERE course_id = OLD.course_id;
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+----------------------
+
+-- יצירת הטריגרים
+-- טריגר להוספת ציון
+
+CREATE TRIGGER after_grade_insert
+AFTER INSERT ON grades
+FOR EACH ROW
+EXECUTE FUNCTION update_student_count_on_insert();
+
+-- טריגר למחיקת ציון
+CREATE TRIGGER after_grade_delete
+AFTER DELETE ON grades
+FOR EACH ROW
+EXECUTE FUNCTION update_student_count_on_delete();
+
+-- הוספת תלמיד חדש וציון
+-- נניח שנוסיף תלמיד חדש עם ציון בקורס מסוים:
+
+-- הוספת תלמיד חדש
+INSERT INTO students (name, email) VALUES ('John Doe', 'john@example.com');
+
+-- נניח שהתלמיד קיבל ציון בקורס מספר 1
+INSERT INTO grades (student_id, course_id, grade) VALUES (currval('students_student_id_seq'), 1, 85);
+
+-- בדיקה של מספר התלמידים בקורס
+-- כדי לבדוק אם מספר התלמידים בקורס השתנה, נוכל להריץ שאילתא על טבלת הקורסים:
+
+SELECT course_id, total_num_of_students
+FROM courses;
+---------------------------------------------------------
+---------------------------------------------------------
+
+-- 2.
+-- יצירת View להצגת כל הציונים עם שמות התלמידים ושמות הקורסים
+
+CREATE VIEW all_grades AS
+SELECT
+    s.name AS student_name,
+    c.course_name,
+    g.grade
+FROM
+    grades g
+JOIN
+    students s ON g.student_id = s.student_id
+JOIN
+    courses c ON g.course_id = c.course_id;
+
+-------------------------------------------------
+--  הצג כדי להציג את כל הציונים מעל 80
+
+CREATE VIEW high_grades AS
+SELECT
+    s.name AS student_name,
+    c.course_name,
+    g.grade
+FROM
+    grades g
+JOIN
+    students s ON g.student_id = s.student_id
+JOIN
+    courses c ON g.course_id = c.course_id
+WHERE
+    g.grade > 80;
+-----------------------------------------------------
+-- הצג כדי להציג את פרטי הקורס עם המספר הגבוה ביותר של תלמידים
+
+CREATE VIEW course_with_most_students AS
+SELECT
+    c.course_name,
+    c.total_num_of_students
+FROM
+    courses c
+ORDER BY
+    c.total_num_of_students DESC
+LIMIT 1;
+-----------------------------------------------------------
+-- להצגת כל הציונים ביחד עם שמות התלמידים ושמות הקורסים
+SELECT * FROM all_grades;
+
+-- להצגת כל הציונים מעל 80
+SELECT * FROM high_grades;
+
+-- להצגת פרטי הקורס עם מספר התלמידים הגדול ביותר
+SELECT * FROM course_with_most_students;
+---------------------------------------------------------------
+---------------------------------------------------------------
+---------------------------------------------------------------
+-- 3.
+-- צור פונקציית procedure_stored אשר מחזירה את התלמיד עם הציון הגבוה ביותר
+--  השאילתא ליצירת ה - procedure_stored + קוד של ההפעלה שלה
+
+CREATE OR REPLACE FUNCTION procedure_stored()
+RETURNS TABLE(student_name VARCHAR, course_name VARCHAR, grade REAL) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        s.name AS student_name,
+        c.course_name,
+        g.grade
+    FROM
+        grades g
+    JOIN
+        students s ON g.student_id = s.student_id
+    JOIN
+        courses c ON g.course_id = c.course_id
+    ORDER BY
+        g.grade DESC
+    LIMIT 1;
+END;
+$$ LANGUAGE plpgsql;
+----------------------
+
+-- הפעלת הפונקציה כדי לקבל את התלמיד עם הציון הגבוה ביותר
+SELECT * FROM procedure_stored();
 
 """
